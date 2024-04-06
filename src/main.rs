@@ -8,6 +8,7 @@ fn main() {
 // r14: repeat index
 // r15: stack pointer
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct Register {
     nr: u8,
 }
@@ -21,6 +22,7 @@ impl Register {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct Immediate {
     value: u8,
 }
@@ -81,6 +83,7 @@ enum Op {
     Noop,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Instruction {
     /// Start/end of block. Bit pattern is in u8
     Block(u8),
@@ -153,12 +156,13 @@ enum Instruction {
     Noop(u16),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct EncodedInstruction(u16);
 
 impl EncodedInstruction {
     fn new_value(op: Op, value: u8) -> Self {
         let op_value = op.to_u8().unwrap();
-        Self((op_value as u16) << 8 | value as u16)
+        Self(u16::from_be_bytes([op_value, value]))
     }
 
     fn new_r1_r2(op: Op, r1: Register, r2: Register) -> Self {
@@ -187,6 +191,7 @@ impl EncodedInstruction {
             Op::Noop
         }
     }
+
     fn r1(&self) -> Register {
         // value is the lower 8 bits
         let value = (self.0 & 0b0000_0000_1111_1111) as u8;
@@ -214,6 +219,18 @@ impl From<u16> for EncodedInstruction {
 impl From<EncodedInstruction> for u16 {
     fn from(encoded: EncodedInstruction) -> Self {
         encoded.0
+    }
+}
+
+impl From<u16> for Instruction {
+    fn from(value: u16) -> Self {
+        EncodedInstruction(value).into()
+    }
+}
+
+impl From<Instruction> for u16 {
+    fn from(instruction: Instruction) -> Self {
+        EncodedInstruction::from(instruction).into()
     }
 }
 
@@ -290,5 +307,66 @@ impl From<Instruction> for EncodedInstruction {
             Instruction::Call(value) => EncodedInstruction::new_value(Op::Call, value),
             Instruction::Noop(value) => EncodedInstruction::new_noop(value),
         }
+    }
+}
+
+struct Instructions {
+    instructions: Vec<Instruction>,
+}
+
+impl Instructions {
+    fn new() -> Self {
+        Self {
+            instructions: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, instruction: Instruction) {
+        self.instructions.push(instruction);
+    }
+
+    fn iter(&self) -> std::slice::Iter<Instruction> {
+        self.instructions.iter()
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        self.instructions
+            .iter()
+            .flat_map(|instruction| {
+                let encoded_instruction: EncodedInstruction = (*instruction).into();
+                encoded_instruction.0.to_be_bytes()
+            })
+            .collect()
+    }
+}
+
+// turn an iterator of u8 into an iterator of instructions
+struct DecodeInstructionIterator<'a> {
+    iter: std::slice::Iter<'a, u8>,
+}
+
+impl<'a> Iterator for DecodeInstructionIterator<'a> {
+    type Item = Instruction;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let op = match self.iter.next() {
+            Some(op) => *op,
+            // we can't find an op anymore, so we're done
+            None => return None,
+        };
+        // now we try to find the value
+        let value = match self.iter.next() {
+            Some(value) => *value,
+            // we can't find a value anymore, so we're done;
+            // the instruction may be incompleted so we cut it off
+            None => return None,
+        };
+        // now we can make a u16
+        let encoded = u16::from_be_bytes([op, value]);
+        // and we can make an encoded instruction
+        let encoded_instruction: EncodedInstruction = encoded.into();
+        // and we can make an instruction
+        let instruction: Instruction = encoded_instruction.into();
+        Some(instruction)
     }
 }
