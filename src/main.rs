@@ -34,8 +34,10 @@ impl Immediate {
     }
 }
 
-// We got 8k for combination of instructions, heap and stack.
-// this can be addressed with 13 bits
+// the first 2k of instructions gets turned into machine code.
+// the rest, 6k, is memory
+// the stack is not part of the memory, but is wiped between each run.
+
 // we still have a lot of space left for other things that are not stored
 // but mapped.
 
@@ -44,10 +46,6 @@ impl Immediate {
 // registers, of which only the 16 low bits are used for addressing, the 16
 // high bits exist and can be used arithmetic. They can be shifted into the low
 // bits if they need to be written.
-
-// question: should the stack be preserved between runs? If not, it's easier to
-// just have a separate stack altogether and it's safe to put everything on it
-// then. This also makes the register size different.
 
 #[derive(Debug, ToPrimitive, FromPrimitive, Clone, Copy, PartialEq, Eq, Hash)]
 enum Op {
@@ -155,42 +153,34 @@ enum Instruction {
     Noop(u16),
 }
 
-struct EncodedInstruction {
-    op: u8,
-    r1_r2: u8,
-}
+struct EncodedInstruction(u16);
 
 impl EncodedInstruction {
+    fn new_value(op: Op, value: u8) -> Self {
+        let op_value = op.to_u8().unwrap();
+        Self((op_value as u16) << 8 | value as u16)
+    }
+
     fn new_r1_r2(op: Op, r1: Register, r2: Register) -> Self {
-        Self {
-            op: op.to_u8().unwrap(),
-            r1_r2: (r1.nr << 4) | r2.nr,
-        }
+        let value = (r1.nr << 4) | r2.nr;
+        Self::new_value(op, value)
     }
 
     fn new_r1_immediate(op: Op, r1: Register, immediate: Immediate) -> Self {
-        Self {
-            op: op.to_u8().unwrap(),
-            r1_r2: (r1.nr << 4) | immediate.value,
-        }
-    }
-
-    fn new_u8(op: Op, value: u8) -> Self {
-        Self {
-            op: op.to_u8().unwrap(),
-            r1_r2: value,
-        }
+        let value = (r1.nr << 4) | immediate.value;
+        Self::new_value(op, value)
     }
 
     fn new_noop(value: u16) -> Self {
-        Self {
-            op: Op::Noop.to_u8().unwrap(),
-            r1_r2: value as u8,
+        if EncodedInstruction(value).op() != Op::Noop {
+            panic!("Not a noop");
         }
+        Self(value)
     }
 
     fn op(&self) -> Op {
-        let op = Op::from_u8(self.op);
+        let op_value = (self.0 >> 8) as u8;
+        let op = Op::from_u8(op_value);
         if let Some(op) = op {
             op
         } else {
@@ -198,32 +188,39 @@ impl EncodedInstruction {
         }
     }
     fn r1(&self) -> Register {
-        Register::new(self.r1_r2 >> 4)
+        // value is the lower 8 bits
+        let value = (self.0 & 0b0000_0000_1111_1111) as u8;
+        Register::new(value >> 4)
     }
     fn r2(&self) -> Register {
-        Register::new(self.r1_r2 & 0b00001111)
+        Register::new((self.0 & 0b0000_0000_0000_1111) as u8)
     }
+
+    fn value(&self) -> u8 {
+        (self.0 & 0b0000_0000_1111_1111) as u8
+    }
+
     fn immediate2(&self) -> Immediate {
-        Immediate::new(self.r1_r2 & 0b00001111)
-    }
-    fn to_u16(&self) -> u16 {
-        ((self.op as u16) << 8) | (self.r1_r2 as u16)
+        Immediate::new((self.0 & 0b0000_0000_0000_1111) as u8)
     }
 }
 
 impl From<u16> for EncodedInstruction {
     fn from(value: u16) -> Self {
-        Self {
-            op: (value >> 8) as u8,
-            r1_r2: (value & 0b0000_0000_1111_1111) as u8,
-        }
+        Self(value)
+    }
+}
+
+impl From<EncodedInstruction> for u16 {
+    fn from(encoded: EncodedInstruction) -> Self {
+        encoded.0
     }
 }
 
 impl From<EncodedInstruction> for Instruction {
     fn from(encoded: EncodedInstruction) -> Self {
         match encoded.op() {
-            Op::Block => Instruction::Block(encoded.r1_r2),
+            Op::Block => Instruction::Block(encoded.value()),
             Op::LoadW => Instruction::LoadW(encoded.r1(), encoded.r2()),
             Op::StoreW => Instruction::StoreW(encoded.r1(), encoded.r2()),
             Op::LoadH => Instruction::LoadH(encoded.r1(), encoded.r2()),
@@ -248,11 +245,11 @@ impl From<EncodedInstruction> for Instruction {
             Op::IfLt => Instruction::IfLt(encoded.r1(), encoded.r2()),
             Op::IfGe => Instruction::IfGe(encoded.r1(), encoded.r2()),
             Op::IfLe => Instruction::IfLe(encoded.r1(), encoded.r2()),
-            Op::Repeat => Instruction::Repeat(encoded.r1_r2),
+            Op::Repeat => Instruction::Repeat(encoded.value()),
             Op::Push => Instruction::Push(encoded.r1(), encoded.r2()),
             Op::Pop => Instruction::Pop(encoded.r1(), encoded.r2()),
-            Op::Call => Instruction::Call(encoded.r1_r2),
-            Op::Noop => Instruction::Noop(encoded.to_u16()),
+            Op::Call => Instruction::Call(encoded.value()),
+            Op::Noop => Instruction::Noop(encoded.0),
         }
     }
 }
@@ -260,7 +257,7 @@ impl From<EncodedInstruction> for Instruction {
 impl From<Instruction> for EncodedInstruction {
     fn from(instruction: Instruction) -> Self {
         match instruction {
-            Instruction::Block(value) => EncodedInstruction::new_u8(Op::Block, value),
+            Instruction::Block(value) => EncodedInstruction::new_value(Op::Block, value),
             Instruction::LoadW(r1, r2) => EncodedInstruction::new_r1_r2(Op::LoadW, r1, r2),
             Instruction::StoreW(r1, r2) => EncodedInstruction::new_r1_r2(Op::StoreW, r1, r2),
             Instruction::LoadH(r1, r2) => EncodedInstruction::new_r1_r2(Op::LoadH, r1, r2),
@@ -287,10 +284,10 @@ impl From<Instruction> for EncodedInstruction {
             Instruction::IfLt(r1, r2) => EncodedInstruction::new_r1_r2(Op::IfLt, r1, r2),
             Instruction::IfGe(r1, r2) => EncodedInstruction::new_r1_r2(Op::IfGe, r1, r2),
             Instruction::IfLe(r1, r2) => EncodedInstruction::new_r1_r2(Op::IfLe, r1, r2),
-            Instruction::Repeat(value) => EncodedInstruction::new_u8(Op::Repeat, value),
+            Instruction::Repeat(value) => EncodedInstruction::new_value(Op::Repeat, value),
             Instruction::Push(r1, r2) => EncodedInstruction::new_r1_r2(Op::Push, r1, r2),
             Instruction::Pop(r1, r2) => EncodedInstruction::new_r1_r2(Op::Pop, r1, r2),
-            Instruction::Call(value) => EncodedInstruction::new_u8(Op::Call, value),
+            Instruction::Call(value) => EncodedInstruction::new_value(Op::Call, value),
             Instruction::Noop(value) => EncodedInstruction::new_noop(value),
         }
     }
