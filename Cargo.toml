@@ -1,0 +1,12 @@
+[package]
+name = "ecisa"
+version = "0.1.0"
+edition = "2021"
+description = "Evolution Core Instruction Set Architecture"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+num = "0.4.1"
+num-derive = "0.4.2"
+num-traits = "0.2.18"
