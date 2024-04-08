@@ -1,13 +1,6 @@
 use num::{FromPrimitive, ToPrimitive};
 use num_derive::{FromPrimitive, ToPrimitive};
 
-fn main() {
-    println!("Hello, world!");
-}
-
-// r14: repeat index
-// r15: stack pointer
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct Register {
     nr: u8,
@@ -310,15 +303,20 @@ impl From<Instruction> for EncodedInstruction {
     }
 }
 
+#[derive(Debug, Default)]
 struct Instructions {
     instructions: Vec<Instruction>,
 }
 
 impl Instructions {
-    fn new() -> Self {
-        Self {
-            instructions: Vec::new(),
-        }
+    fn new(instructions: Vec<Instruction>) -> Self {
+        Self { instructions }
+    }
+
+    fn decode(data: &[u8]) -> Self {
+        let iter = DecodeInstructionIterator { iter: data.iter() };
+        let instructions: Vec<Instruction> = iter.collect();
+        Self::new(instructions)
     }
 
     fn push(&mut self, instruction: Instruction) {
